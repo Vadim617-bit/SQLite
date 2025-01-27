@@ -14,13 +14,25 @@ const db = new sqlite3.Database('./users.db', (err) => {
     }
 });
 
-// Створення таблиці користувачів, якщо її немає
+// Створення таблиць, якщо їх немає
 db.serialize(() => {
+    // Таблиця користувачів
     db.run(`
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             age INTEGER NOT NULL
+        )
+    `);
+
+    // Таблиця для зв'язків між друзями
+    db.run(`
+        CREATE TABLE IF NOT EXISTS friendships (
+            user_id INTEGER NOT NULL,
+            friend_id INTEGER NOT NULL,
+            PRIMARY KEY (user_id, friend_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (friend_id) REFERENCES users(id) ON DELETE CASCADE
         )
     `);
 });
@@ -29,8 +41,10 @@ app.use(bodyParser.json());
 
 // Маршрут для кореневого шляху
 app.get('/', (req, res) => {
-    res.send('Welcome to the REST API server for User entity!');
+    res.send('Welcome to the REST API server with Friends functionality!');
 });
+
+// *** Користувачі ***
 
 // Отримати всіх користувачів
 app.get('/users', (req, res) => {
@@ -58,56 +72,67 @@ app.post('/users', (req, res) => {
     });
 });
 
-// Отримати користувача за ID
-app.get('/users/:id', (req, res) => {
+// *** Друзі ***
+
+// Додати друга
+app.post('/users/:id/friends', (req, res) => {
     const userId = parseInt(req.params.id, 10);
-    const sql = 'SELECT * FROM users WHERE id = ?';
+    const { friendId } = req.body;
 
-    db.get(sql, [userId], (err, row) => {
-        if (err) {
-            return res.status(500).json({ message: 'Error retrieving user', error: err.message });
-        }
-        if (!row) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-        res.json(row);
-    });
-});
-
-// Оновити користувача за ID
-app.put('/users/:id', (req, res) => {
-    const userId = parseInt(req.params.id, 10);
-    const { name, age } = req.body;
-
-    if (!name || !age) {
-        return res.status(400).json({ message: 'Name and age are required' });
+    if (!friendId) {
+        return res.status(400).json({ message: 'Friend ID is required' });
     }
 
-    const sql = 'UPDATE users SET name = ?, age = ? WHERE id = ?';
-    db.run(sql, [name, age, userId], function (err) {
+    const sql = `
+        INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)
+    `;
+    db.run(sql, [userId, friendId], function (err) {
         if (err) {
-            return res.status(500).json({ message: 'Error updating user', error: err.message });
+            return res.status(500).json({ message: 'Error adding friend', error: err.message });
         }
-        if (this.changes === 0) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-        res.json({ id: userId, name, age });
+        res.json({ message: 'Friend added successfully.' });
     });
 });
 
-// Видалити користувача за ID
-app.delete('/users/:id', (req, res) => {
+// Отримати список друзів користувача
+app.get('/users/:id/friends', (req, res) => {
     const userId = parseInt(req.params.id, 10);
-    const sql = 'DELETE FROM users WHERE id = ?';
 
-    db.run(sql, [userId], function (err) {
+    const sql = `
+        SELECT u.id, u.name, u.age
+        FROM friendships f
+        JOIN users u ON f.friend_id = u.id
+        WHERE f.user_id = ?
+    `;
+
+    db.all(sql, [userId], (err, rows) => {
         if (err) {
-            return res.status(500).json({ message: 'Error deleting user', error: err.message });
+            return res.status(500).json({ message: 'Error retrieving friends', error: err.message });
+        }
+        res.json(rows);
+    });
+});
+
+// Видалити друга
+app.delete('/users/:id/friends', (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    const { friendId } = req.body;
+
+    if (!friendId) {
+        return res.status(400).json({ message: 'Friend ID is required' });
+    }
+
+    const sql = `
+        DELETE FROM friendships WHERE user_id = ? AND friend_id = ?
+    `;
+    db.run(sql, [userId, friendId], function (err) {
+        if (err) {
+            return res.status(500).json({ message: 'Error deleting friend', error: err.message });
         }
         if (this.changes === 0) {
-            return res.status(404).json({ message: 'User not found' });
+            return res.status(404).json({ message: 'Friendship not found' });
         }
-        res.status(204).send();
+        res.json({ message: 'Friend removed successfully.' });
     });
 });
 
